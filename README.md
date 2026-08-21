@@ -1,49 +1,49 @@
 # Switch UDIM
 
-Blender-аддон для быстрого переключения Image Texture нод между режимами **Single Image** и **UDIM Tiles**.
+Blender addon for quickly switching Image Texture nodes between **Single Image** and **UDIM Tiles** modes.
 
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
 ![Version](https://img.shields.io/badge/Version-1.1.0-blue)
 
-## Установка
+## Installation
 
-### Из ZIP
+### From ZIP
 
-1. Скачайте `switch_udim.zip`
+1. Download `switch_udim.zip`
 2. Blender → **Edit** → **Preferences** → **Add-ons** → **Install...**
-3. Выберите `switch_udim.zip`
-4. Включите аддон галочкой
+3. Select `switch_udim.zip`
+4. Enable the addon with the checkbox
 
-### Из репозитория
+### From Repository
 
-Скопируйте папку `switch_udim` в:
+Copy the `switch_udim` folder to:
 - **Windows:** `%APPDATA%\Blender Foundation\Blender\<version>\scripts\addons\`
 - **macOS:** `~/Library/Application Support/Blender/<version>/scripts/addons/`
 - **Linux:** `~/.config/blender/<version>/scripts/addons/`
 
-## Использование
+## Usage
 
-Откройте **Shader Editor** → нажмите **N** → вкладка **UDIM**.
+Open **Shader Editor** → press **N** → **UDIM** tab.
 
-| Кнопка | Действие |
-|--------|----------|
-| **Single → UDIM** | Переключить все Image Texture с Single Image на UDIM Tiles |
-| **UDIM → Single** | Переключить все Image Texture с UDIM Tiles на Single Image |
-| **UDIM Stats** | Статистика: количество текстур, тайлов, размер на диске, пропущенные файлы |
+| Button | Action |
+|--------|--------|
+| **Single → UDIM** | Switch all Image Textures from Single Image to UDIM Tiles |
+| **UDIM → Single** | Switch all Image Textures from UDIM Tiles to Single Image |
+| **UDIM Stats** | Statistics: texture count, tile count, disk size, missing files |
 
-## Скриншоты
+## Screenshots
 
-<!-- TODO: добавить скриншоты панели -->
+<!-- TODO: add panel screenshots -->
 
-## Требования
+## Requirements
 
 - Blender 3.0+
 
-## Лицензия
+## License
 
-GNU General Public License v3.0 — см. [LICENSE](LICENSE)
+GNU General Public License v3.0 — see [LICENSE](LICENSE)
 
-## Автор
+## Author
 
 **Maksim Kovalev**
