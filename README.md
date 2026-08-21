@@ -3,7 +3,7 @@
 Blender-аддон для быстрого переключения Image Texture нод между режимами **Single Image** и **UDIM Tiles**.
 
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
-![License](https://img.shields.io/badge/License-MIT-green)
+![License](https://img.shields.io/badge/License-GPLv3-green)
 ![Version](https://img.shields.io/badge/Version-1.1.0-blue)
 
 ## Установка
@@ -42,7 +42,7 @@ Blender-аддон для быстрого переключения Image Textur
 
 ## Лицензия
 
-MIT License — см. [LICENSE](LICENSE)
+GNU General Public License v3.0 — см. [LICENSE](LICENSE)
 
 ## Автор
 
