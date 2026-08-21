@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "switch_udim"
+version = "1.1.0"
+name = "Switch UDIM"
+tagline = "Switch Image Textures between Single Image and UDIM Tiles"
+maintainer = "Maksim Kovalev <m.kovalev089@gmail.com>"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Read texture file paths for UDIM Stats"
