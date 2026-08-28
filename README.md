@@ -8,11 +8,17 @@ Blender addon for quickly switching Image Texture nodes between **Single Image**
 
 ## Installation
 
-### From ZIP
+### Blender 4.2+ (Extension)
 
-1. Download `switch_udim.zip`
+1. Download `switch_udim_extension.zip`
+2. Blender → **Edit** → **Preferences** → **Get Extensions** → **⚙** → **Install from Disk...**
+3. Select `switch_udim_extension.zip`
+
+### Blender 3.0–4.1 (Legacy Add-on)
+
+1. Download `switch_udim_legacy.zip`
 2. Blender → **Edit** → **Preferences** → **Add-ons** → **Install...**
-3. Select `switch_udim.zip`
+3. Select `switch_udim_legacy.zip`
 4. Enable the addon with the checkbox
 
 ### From Repository
@@ -57,6 +63,5 @@ GNU General Public License v3.0 — see [LICENSE](LICENSE)
 |------|-------------|
 | [STUKACH](https://github.com/abyrvalg379/STUKACH) | Pipeline asset validator for Blender |
 | [LAMPOCHKA](https://github.com/abyrvalg379/LAMPOCHKA) | Scene light manager |
-| [Switch_UDIM](https://github.com/abyrvalg379/Switch_UDIM) | Single ↔ UDIM texture switcher |
 | [FLOMASTER](https://github.com/abyrvalg379/FLOMASTER) | OCIO launcher for DCC apps |
 | [FILTER](https://github.com/abyrvalg379/FILTER) | Toggle visibility/selection by type, name, collection |
