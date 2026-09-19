@@ -2,6 +2,8 @@
 
 Blender addon for quickly switching Image Texture nodes between **Single Image** and **UDIM Tiles** modes.
 
+*Документация на русском: [README.ru.md](README.ru.md)*
+
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
 ![Version](https://img.shields.io/badge/Version-1.1.0-blue)
