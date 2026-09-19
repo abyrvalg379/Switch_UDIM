@@ -12,13 +12,13 @@ Blender addon for quickly switching Image Texture nodes between **Single Image**
 
 ### Blender 4.2+ (Extension)
 
-1. Download `switch_udim_extension.zip`
+1. Download `switch_udim_extension.zip` from the [latest release](https://github.com/abyrvalg379/Switch_UDIM/releases/latest)
 2. Blender → **Edit** → **Preferences** → **Get Extensions** → **⚙** → **Install from Disk...**
 3. Select `switch_udim_extension.zip`
 
 ### Blender 3.0–4.1 (Legacy Add-on)
 
-1. Download `switch_udim_legacy.zip`
+1. Download `switch_udim_legacy.zip` from the [latest release](https://github.com/abyrvalg379/Switch_UDIM/releases/latest)
 2. Blender → **Edit** → **Preferences** → **Add-ons** → **Install...**
 3. Select `switch_udim_legacy.zip`
 4. Enable the addon with the checkbox

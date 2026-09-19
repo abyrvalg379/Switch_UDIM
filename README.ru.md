@@ -12,13 +12,13 @@
 
 ### Blender 4.2+ (Extension)
 
-1. Скачайте `switch_udim_extension.zip`
+1. Скачайте `switch_udim_extension.zip` со страницы [последнего релиза](https://github.com/abyrvalg379/Switch_UDIM/releases/latest)
 2. Blender → **Edit** → **Preferences** → **Get Extensions** → **⚙** → **Install from Disk...**
 3. Выберите `switch_udim_extension.zip`
 
 ### Blender 3.0–4.1 (Legacy Add-on)
 
-1. Скачайте `switch_udim_legacy.zip`
+1. Скачайте `switch_udim_legacy.zip` со страницы [последнего релиза](https://github.com/abyrvalg379/Switch_UDIM/releases/latest)
 2. Blender → **Edit** → **Preferences** → **Add-ons** → **Install...**
 3. Выберите `switch_udim_legacy.zip`
 4. Включите аддон галочкой
