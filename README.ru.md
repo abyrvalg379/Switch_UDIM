@@ -1,5 +1,7 @@
 # Switch UDIM
 
+![Switch UDIM](cover.png)
+
 Аддон Blender для быстрого переключения нод Image Texture между режимами **Single Image** и **UDIM Tiles**.
 
 *English documentation: [README.md](README.md)*
