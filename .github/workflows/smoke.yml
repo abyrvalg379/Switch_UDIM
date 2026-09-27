@@ -2,9 +2,9 @@ name: Smoke
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
   schedule:
     - cron: "0 6 * * 1" # weekly on Mondays - catches bitrot (URLs, API drift)
   workflow_dispatch:
