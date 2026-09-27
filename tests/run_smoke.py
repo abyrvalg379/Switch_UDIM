@@ -62,6 +62,11 @@ def build_zip(dst: Path) -> Path:
 
 
 def main():
+    # Windows-раннеры печатают в cp1252, а вывод Blender содержит любые
+    # байты - иначе UnicodeEncodeError убивает сам смоук-раннер
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--blender", type=Path, default=None,
                     help="Blender executable (default: BLENDER_BIN or autodetect)")
@@ -87,6 +92,7 @@ def main():
     env = os.environ.copy()
     env["BLENDER_USER_RESOURCES"] = str(ures)
     env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
 
     def run(cmd, what):
         print(f"[smoke] {what}: {' '.join(str(c) for c in cmd)}")
