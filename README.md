@@ -7,8 +7,9 @@ Blender addon for quickly switching Image Texture nodes between **Single Image**
 *Документация на русском: [README.ru.md](README.ru.md)*
 
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
+![Smoke](https://github.com/abyrvalg379/Switch_UDIM/actions/workflows/smoke.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-1.1.0-blue)
+![Version](https://img.shields.io/badge/Version-1.1.1-blue)
 
 ## Installation
 
@@ -38,9 +39,41 @@ Open **Shader Editor** → press **N** → **UDIM** tab.
 
 | Button | Action |
 |--------|--------|
-| **Single → UDIM** | Switch all Image Textures from Single Image to UDIM Tiles |
-| **UDIM → Single** | Switch all Image Textures from UDIM Tiles to Single Image |
+| **Single → UDIM** | Switch selected Image Texture nodes (or all, if nothing is selected) from Single Image to UDIM Tiles |
+| **UDIM → Single** | Switch selected Image Texture nodes (or all) from UDIM Tiles to Single Image |
 | **UDIM Stats** | Statistics: texture count, tile count, disk size, missing files |
+| **Reload Changed** | Reload only the textures whose files changed on disk (UDIM checked per tile); a disk snapshot survives Blender restarts, so edits made outside Blender are caught |
+
+### Auto Connect
+
+Scans a folder (or images already loaded in the .blend) and wires PBR maps into the **Principled BSDF** by asset naming.
+
+- **Connect from Folder** — pick a folder with textures
+- **Connect Blend Images** — use images already loaded into the .blend
+- **Overwrite links** — reconnect sockets that are already linked
+- **Copy Image Settings** — copy colorspace / interpolation / extension / projection from the active image node to the selected ones
+
+Naming convention: `Asset_Role.ext`, UDIM: `Asset_Role.1001.ext` (2+ tiles → UDIM Tiles automatically). The asset name must match the object, mesh or material name.
+
+| Suffix (default) | Target |
+|--------|--------|
+| basecolor, albedo, diffuse, color | Base Color (sRGB) |
+| ao, occlusion | Multiplied into Base Color (Non-Color) |
+| emission, emissive | Emission Color (sRGB) |
+| roughness | Roughness (Non-Color) |
+| gloss, glossiness | Invert node → Roughness (Non-Color) |
+| metallic | Metallic (Non-Color) |
+| specular | Specular IOR Level (Non-Color) |
+| transmission | Transmission Weight (Non-Color) |
+| opacity, alpha | Alpha (Non-Color) |
+| normal | Normal Map node (Non-Color); DX normal maps are skipped with a report |
+| bump | Bump node → Normal (Non-Color) |
+| displacement, height | Displacement node → Material Output (Non-Color) |
+| mask, msk | Factor of the overlay Mix on Base Color (Non-Color) |
+
+**Overlay by mask**: `<Asset>_mask.png` mixes `<Asset>_basecolor.png` with `<Asset>_basecolor_2.png` (Mix Color, MULTIPLY-style chain) and feeds Base Color. No `basecolor_2` file? The mix gets a white constant — paint the overlay color by hand. No `basecolor` file? The mask can't be applied and is reported.
+
+Suffix keywords are editable in **Edit → Preferences → Add-ons → Switch UDIM**. Colorspace is resolved the Node Wrangler way (`is_data`) and works on both standard and ACES OCIO configs.
 
 ## Screenshots
 

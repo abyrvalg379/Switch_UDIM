@@ -7,8 +7,9 @@
 *English documentation: [README.md](README.md)*
 
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
+![Smoke](https://github.com/abyrvalg379/Switch_UDIM/actions/workflows/smoke.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-1.1.0-blue)
+![Version](https://img.shields.io/badge/Version-1.1.1-blue)
 
 ## Установка
 
@@ -38,9 +39,41 @@
 
 | Кнопка | Действие |
 |--------|--------|
-| **Single → UDIM** | Переключить все Image Textures из Single Image в UDIM Tiles |
-| **UDIM → Single** | Переключить все Image Textures из UDIM Tiles в Single Image |
+| **Single → UDIM** | Переключить выделенные ноды Image Texture (или все, если ничего не выделено) из Single Image в UDIM Tiles |
+| **UDIM → Single** | Переключить выделенные ноды Image Texture (или все) из UDIM Tiles в Single Image |
 | **UDIM Stats** | Статистика: количество текстур, тайлов, размер на диске, отсутствующие файлы |
+| **Reload Changed** | Перезагрузить только те текстуры, чьи файлы изменились на диске (UDIM проверяется по тайлам); снимок диска переживает рестарт Blender — правки, сделанные вне Blender, подхватятся |
+
+### Автоподключение
+
+Сканирует папку (или уже загруженные в .blend изображения) и подключает PBR-карты к **Principled BSDF** по неймингу ассета.
+
+- **Connect from Folder** — укажите папку с текстурами
+- **Connect Blend Images** — использовать уже загруженные в файл изображения
+- **Заменять связи** — переподключать сокеты, где связь уже есть
+- **Copy Image Settings** — скопировать colorspace / интерполяцию / extension / projection с активной текстурной ноды на выделенные
+
+Формат имени: `ИмяАссета_Роль.ext`, UDIM: `ИмяАссета_Роль.1001.ext` (2+ тайла → автоматом UDIM Tiles). Имя ассета должно совпадать с именем объекта, меши или материала.
+
+| Суффикс (по умолчанию) | Куда подключается |
+|--------|--------|
+| basecolor, albedo, diffuse, color | Base Color (sRGB) |
+| ao, occlusion | Умножается на Base Color (Non-Color) |
+| emission, emissive | Emission Color (sRGB) |
+| roughness | Roughness (Non-Color) |
+| gloss, glossiness | Нода Invert → Roughness (Non-Color) |
+| metallic | Metallic (Non-Color) |
+| specular | Specular IOR Level (Non-Color) |
+| transmission | Transmission Weight (Non-Color) |
+| opacity, alpha | Alpha (Non-Color) |
+| normal | Нода Normal Map (Non-Color); DX-нормали пропускаются с репортом |
+| bump | Нода Bump → Normal (Non-Color) |
+| displacement, height | Нода Displacement → Material Output (Non-Color) |
+| mask, msk | Фактор микса-оверлея на Base Color (Non-Color) |
+
+**Оверлей по маске**: `<Ассет>_mask.png` замешивает `<Ассет>_basecolor.png` с `<Ассет>_basecolor_2.png` (нода Mix Color) и подаёт в Base Color. Нет файла `basecolor_2`? В миксе будет константа-белый — покрасите оверлей руками. Нет `basecolor`? Маску не к чему применять — будет репорт.
+
+Ключевые слова суффиксов настраиваются в **Edit → Preferences → Add-ons → Switch UDIM**. Colorspace ставится как в Node Wrangler (`is_data`) и работает и на стандартном, и на ACES OCIO-конфиге.
 
 ## Скриншоты
 
