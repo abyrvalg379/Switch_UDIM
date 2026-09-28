@@ -460,6 +460,9 @@ def _connect_groups(context, groups):
         nt = mat.node_tree
         bsdf, out = _ensure_bsdf(nt)
         mats_touched.add(mat.name)
+        # материал сразу активный на объекте — виден в шейдер-редакторе
+        if target.active_material != mat:
+            target.active_material = mat
 
         base_x, base_y = bsdf.location.x, bsdf.location.y
         y_off = 0
@@ -603,9 +606,15 @@ def _connect_groups(context, groups):
         # подписями БЕЗ связей: камуфляжную разводку художник делает руками
         mask_keys = sorted(k for k in g if k.startswith("mask#"))
         if mask_keys:
+            # идемпотентность: маска с такой подписью уже вставлена — не дублируем
+            placed = {n.label for n in nt.nodes
+                      if n.type == 'TEX_IMAGE'
+                      and (n.label or "").startswith("mask_")}
             m_y = base_y - y_off - 320
             for mk in mask_keys:
                 sub_name = mk.split("#", 1)[1]
+                if f"mask_{sub_name}" in placed:
+                    continue
                 m_entry = g[mk]
                 if m_entry.get("dx"):
                     continue
@@ -968,9 +977,9 @@ def _show_reload_results(context, res):
 # ──────────────────────────────────────────────
 
 class SWITCH_OT_connect_folder(bpy.types.Operator):
-    """Сканировать папку и подключить текстуры к Principled BSDF по неймингу ассета (Ассет_Роль.ext, UDIM: Ассет_Роль.1001.ext)"""
+    """Подключить текстуры из папки (поле «Папка текстур» выше) к Principled BSDF по неймингу ассета"""
     bl_idname = "texture.connect_folder"
-    bl_label = "Connect from Folder"
+    bl_label = "Connect"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: StringProperty(subtype='DIR_PATH', name="Folder")
@@ -981,14 +990,24 @@ class SWITCH_OT_connect_folder(bpy.types.Operator):
         return bool(vl.objects.active or vl.objects.selected)
 
     def invoke(self, context, event):
+        # папка уже указана в панели — подключаем сразу, без файл-браузера
+        if (context.scene.swudim_folder or "").strip():
+            return self.execute(context)
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        folder = bpy.path.abspath(self.filepath)
-        if not os.path.isdir(folder):
-            self.report({'ERROR'}, "Папка не найдена")
+        folder = (self.filepath or "").strip() or \
+                 (context.scene.swudim_folder or "").strip()
+        if not folder:
+            self.report({'ERROR'}, "Укажите папку с текстурами (поле выше)")
             return {'CANCELLED'}
+        folder = bpy.path.abspath(folder)
+        if not os.path.isdir(folder):
+            self.report({'ERROR'}, f"Папка не найдена: {folder}")
+            return {'CANCELLED'}
+        # запоминаем — дальше Connect работает в одно нажатие
+        context.scene.swudim_folder = folder
         groups = _scan_folder(folder, _role_map())
         if not groups:
             self.report({'WARNING'}, "В папке нет изображений")
@@ -1163,8 +1182,9 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
         head = layout.column(align=True)
         head.label(text="Auto Connect:", icon='NODE_TEXTURE')
         col = layout.column(align=True)
+        col.prop(context.scene, "swudim_folder", text="")
         col.prop(context.scene, "swudim_overwrite", text="Заменять связи")
-        col.operator("texture.connect_folder", icon='FILE_FOLDER')
+        col.operator("texture.connect_folder", icon='LINKED')
         col.operator("texture.connect_blend", icon='IMAGE_DATA')
 
         layout.separator()
@@ -1196,6 +1216,13 @@ def register():
         description="Переподключать сокеты, где уже есть связь",
         default=False,
     )
+    bpy.types.Scene.swudim_folder = StringProperty(
+        name="Папка текстур",
+        description="Папка с текстурами для Auto Connect — запоминается, "
+                    "Connect работает в одно нажатие",
+        subtype='DIR_PATH',
+        default="",
+    )
     bpy.app.handlers.load_post.append(_auto_snapshot)
     # register() выполняется в restricted-контексте (bpy.data закрыт) —
     # снимок откладываем в таймер
@@ -1216,6 +1243,8 @@ def unregister():
     # проп мог быть снесён чужим unregister'ом (тестовые циклы, дубль-регистрации)
     if hasattr(bpy.types.Scene, "swudim_overwrite"):
         del bpy.types.Scene.swudim_overwrite
+    if hasattr(bpy.types.Scene, "swudim_folder"):
+        del bpy.types.Scene.swudim_folder
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
