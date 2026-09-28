@@ -17,6 +17,7 @@ import tempfile
 from bpy.props import (
     StringProperty,
     BoolProperty,
+    EnumProperty,
 )
 
 # ──────────────────────────────────────────────
@@ -44,6 +45,11 @@ ROLE_ORDER = ("basecolor", "ao", "emission", "roughness", "gloss", "metallic",
 # mask не подключается сама по себе — она.factor микса оверлея на Base Color
 # (обрабатывается внутри роли basecolor). В ROLE_ORDER не входит.
 ROLE_ALL = ROLE_ORDER + ("mask",)
+
+# Порядок галок в панели: частые роли сверху (как в ТЗ юзера)
+PANEL_ROLE_ORDER = ("basecolor", "roughness", "metallic", "normal",
+                    "displacement", "opacity", "mask", "emission",
+                    "specular", "transmission", "ao", "gloss", "bump")
 
 ROLE_LABELS = {
     "basecolor": "Base Color",
@@ -422,6 +428,20 @@ def _connect_groups(context, groups):
     unmatched = []
     roleless = {}
 
+    scene = context.scene
+    only_mat = None
+    if getattr(scene, "swudim_target", "ALL") == "ACTIVE":
+        # «только выбранный»: материал открытый в шейдер-редакторе,
+        # либо активный материал активного объекта
+        only_mat = getattr(context, "material", None)
+        if only_mat is None:
+            ob_act = context.view_layer.objects.active
+            if ob_act is not None:
+                only_mat = ob_act.active_material
+        if only_mat is None:
+            notes.append("Активный материал не найден — "
+                         "подключаю по именам объектов")
+
     role_keys = [k for k in groups
                  if any(r in groups[k] for r in ROLE_ORDER)
                  or any(kk.startswith("mask#") for kk in groups[k])]
@@ -453,16 +473,19 @@ def _connect_groups(context, groups):
             unmatched.append(key)
             continue
 
-        mat = _ensure_material(target, key)
-        if mat is None:
-            errors.append(f"{key}: нет слота материалов")
-            continue
+        if only_mat is not None:
+            mat = only_mat
+        else:
+            mat = _ensure_material(target, key)
+            if mat is None:
+                errors.append(f"{key}: нет слота материалов")
+                continue
+            # материал сразу активный на объекте — виден в шейдер-редакторе
+            if target.active_material != mat:
+                target.active_material = mat
         nt = mat.node_tree
         bsdf, out = _ensure_bsdf(nt)
         mats_touched.add(mat.name)
-        # материал сразу активный на объекте — виден в шейдер-редакторе
-        if target.active_material != mat:
-            target.active_material = mat
 
         base_x, base_y = bsdf.location.x, bsdf.location.y
         y_off = 0
@@ -472,6 +495,8 @@ def _connect_groups(context, groups):
         for role in ROLE_ORDER:
             if role not in g:
                 continue
+            if not getattr(scene, "swudim_use_" + role, True):
+                continue  # роль выключена галкой в панели
             entry = g[role]
             if role == "normal" and entry.get("dx"):
                 notes.append(f"{key}/Normal: DX-карта пропущена (Blender хочет GL)")
@@ -558,10 +583,17 @@ def _connect_groups(context, groups):
                 bc_tex = tex
                 # Оверлей по маске: Mix(C1=basecolor, C2=basecolor_2 или
                 # константа, Fac=mask) → Base Color
-                mask_entry = g.get("mask") or g.get("mask#2")
+                use_mask = getattr(scene, "swudim_use_mask", True)
+                mask_entry = (g.get("mask") or g.get("mask#2")) \
+                    if use_mask else None
                 o_entry = g.get("basecolor#2")
                 if mask_entry is None and o_entry is not None:
-                    notes.append(f"{key}: basecolor_2 без mask — не подключен")
+                    if not use_mask:
+                        notes.append(f"{key}: basecolor_2 есть, но маски "
+                                     f"выключены галкой — не подключен")
+                    else:
+                        notes.append(f"{key}: basecolor_2 без mask — "
+                                     f"не подключен")
                 if mask_entry is not None:
                     try:
                         m_img = _load_role_image(mask_entry)
@@ -604,32 +636,33 @@ def _connect_groups(context, groups):
         # Маски (mask#имя): производственные сеты (Mari/Substance camo) несут
         # десятки именованных масок — грузим UDIM-наборы, вставляем ноды с
         # подписями БЕЗ связей: камуфляжную разводку художник делает руками
-        mask_keys = sorted(k for k in g if k.startswith("mask#"))
-        if mask_keys:
-            # идемпотентность: маска с такой подписью уже вставлена — не дублируем
-            placed = {n.label for n in nt.nodes
-                      if n.type == 'TEX_IMAGE'
-                      and (n.label or "").startswith("mask_")}
-            m_y = base_y - y_off - 320
-            for mk in mask_keys:
-                sub_name = mk.split("#", 1)[1]
-                if f"mask_{sub_name}" in placed:
-                    continue
-                m_entry = g[mk]
-                if m_entry.get("dx"):
-                    continue
-                try:
-                    m_img = _load_role_image(m_entry)
-                except RuntimeError:
-                    errors.append(f"{key}/mask_{sub_name}: файл не читается")
-                    continue
-                _set_colorspace(m_img, "mask")
-                mnode = nt.nodes.new('ShaderNodeTexImage')
-                mnode.image = m_img
-                mnode.label = f"mask_{sub_name}"
-                mnode.location = (base_x - 300, m_y)
-                m_y -= 220
-                mask_count += 1
+        if getattr(scene, "swudim_use_mask", True):
+            mask_keys = sorted(k for k in g if k.startswith("mask#"))
+            if mask_keys:
+                # идемпотентность: маска с такой подписью уже вставлена — не дублируем
+                placed = {n.label for n in nt.nodes
+                          if n.type == 'TEX_IMAGE'
+                          and (n.label or "").startswith("mask_")}
+                m_y = base_y - y_off - 320
+                for mk in mask_keys:
+                    sub_name = mk.split("#", 1)[1]
+                    if f"mask_{sub_name}" in placed:
+                        continue
+                    m_entry = g[mk]
+                    if m_entry.get("dx"):
+                        continue
+                    try:
+                        m_img = _load_role_image(m_entry)
+                    except RuntimeError:
+                        errors.append(f"{key}/mask_{sub_name}: файл не читается")
+                        continue
+                    _set_colorspace(m_img, "mask")
+                    mnode = nt.nodes.new('ShaderNodeTexImage')
+                    mnode.image = m_img
+                    mnode.label = f"mask_{sub_name}"
+                    mnode.location = (base_x - 300, m_y)
+                    m_y -= 220
+                    mask_count += 1
 
     return {
         "connected": connected,
@@ -1183,7 +1216,17 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
         head.label(text="Auto Connect:", icon='NODE_TEXTURE')
         col = layout.column(align=True)
         col.prop(context.scene, "swudim_folder", text="")
+        col.prop(context.scene, "swudim_target", text="")
         col.prop(context.scene, "swudim_overwrite", text="Заменять связи")
+
+        box = layout.box()
+        box.label(text="Карты к подключению:", icon='TEXTURE_SHADED')
+        grid = box.grid(flow=True, columns=2, align=True)
+        for role in PANEL_ROLE_ORDER:
+            grid.prop(context.scene, "swudim_use_" + role,
+                      text=ROLE_LABELS[role])
+
+        col = layout.column(align=True)
         col.operator("texture.connect_folder", icon='LINKED')
         col.operator("texture.connect_blend", icon='IMAGE_DATA')
 
@@ -1223,6 +1266,25 @@ def register():
         subtype='DIR_PATH',
         default="",
     )
+    for role in PANEL_ROLE_ORDER:
+        setattr(bpy.types.Scene, "swudim_use_" + role, BoolProperty(
+            name=ROLE_LABELS[role],
+            description="Подключать эту карту при Auto Connect",
+            default=(role != "mask"),
+        ))
+    bpy.types.Scene.swudim_target = EnumProperty(
+        name="Куда",
+        description="Цель подключения карт",
+        items=(
+            ("ALL", "Все материалы ассета",
+             "Материалы объектов, подобранных по имени ассета "
+             "(+ активный объект при фолбэке)"),
+            ("ACTIVE", "Только выбранный материал",
+             "Материал, открытый в шейдер-редакторе, либо активный "
+             "материал активного объекта"),
+        ),
+        default="ALL",
+    )
     bpy.app.handlers.load_post.append(_auto_snapshot)
     # register() выполняется в restricted-контексте (bpy.data закрыт) —
     # снимок откладываем в таймер
@@ -1245,6 +1307,11 @@ def unregister():
         del bpy.types.Scene.swudim_overwrite
     if hasattr(bpy.types.Scene, "swudim_folder"):
         del bpy.types.Scene.swudim_folder
+    for role in PANEL_ROLE_ORDER:
+        if hasattr(bpy.types.Scene, "swudim_use_" + role):
+            delattr(bpy.types.Scene, "swudim_use_" + role)
+    if hasattr(bpy.types.Scene, "swudim_target"):
+        del bpy.types.Scene.swudim_target
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 

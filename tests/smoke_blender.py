@@ -263,6 +263,16 @@ def st_stats():
     return "stats ran headless"
 
 
+def st_toggles():
+    """Смоук подключает все роли (включая маски) — включаем галки явно;
+    дефолт аддона: маски выключены (болезненный кейс юзера)."""
+    scene = bpy.context.scene
+    for role in mod.PANEL_ROLE_ORDER:
+        setattr(scene, "swudim_use_" + role, True)
+    scene.swudim_target = 'ALL'
+    return f"{len(mod.PANEL_ROLE_ORDER)} roles enabled"
+
+
 def st_version():
     # у extension-модулей Blender вырезает bl_info — версия живёт в манифесте
     v = getattr(mod, "bl_info", {}).get("version")
@@ -286,6 +296,7 @@ def main():
     print("=" * 60)
 
     step("version", st_version)
+    step("toggles", st_toggles)
     step("fixture", st_fixture)
     step("objects", st_objects)
     step("connect_folder", st_connect)
