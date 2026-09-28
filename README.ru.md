@@ -9,7 +9,7 @@
 ![Blender](https://img.shields.io/badge/Blender-3.0%2B-orange)
 ![Smoke](https://github.com/abyrvalg379/Switch_UDIM/actions/workflows/smoke.yml/badge.svg)
 ![License](https://img.shields.io/badge/License-GPLv3-green)
-![Version](https://img.shields.io/badge/Version-1.1.1-blue)
+![Version](https://img.shields.io/badge/Version-1.2.0-blue)
 
 ## Установка
 

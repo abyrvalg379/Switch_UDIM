@@ -1,4 +1,4 @@
-_VERSION = (1, 1, 1)
+_VERSION = (1, 2, 0)
 
 bl_info = {
     "name": "Switch UDIM",
