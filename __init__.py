@@ -152,11 +152,17 @@ def _match_role(base, role_map):
     return base, None
 
 
+GENERIC_QUALIFIERS = {"raw", "acescg", "aces2065", "linear", "srgb", "scrgb"}
+
+
 def _parse_stem(stem, role_map):
-    """Имя файла (без расширения) → (ключ ассета, роль, тайл UDIM, is_dx, слой).
-    Слой — число после роли ('Ассет_basecolor_2' → слой 2, оверлей для маски).
-    Цифра съедается ТОЛЬКО если после среза остаётся валидная роль
-    ('t34_88' остаётся ключом 't34_88')."""
+    """Имя файла (без расширения) → (ключ ассета, роль, тайл UDIM, is_dx,
+    слой, под-имя). Порядок распознавания роли:
+    1) хвостовой суффикс — 'Ассет_Роль.ext' (классика);
+    2) слой: 'Ассет_Роль_2' (оверлей), цифра съедается только при валидной роли;
+    3) роль-токен в середине — производственный нейминг 'asset.role_qual.tile':
+       'mi24.basecolor_acescg.1001' → ключ 'mi24', роль basecolor, под-имя None;
+       'mi24.mask_dirt01_raw.1001' → роль mask, под-имя 'dirt01'."""
     low = stem.lower()
     m = UDIM_RE.match(low)
     if m:
@@ -172,6 +178,7 @@ def _parse_stem(stem, role_map):
         base = re.sub(r"[._\- ]" + re.escape(tokens[-1]) + r"$", "", base)
     key, role = _match_role(base, role_map)
     layer = None
+    sub = None
     if role is None:
         m2 = re.match(r"^(.+)[._\- ](\d{1,2})$", base)
         if m2:
@@ -179,8 +186,19 @@ def _parse_stem(stem, role_map):
             if role2 is not None:
                 key, role, layer = key2, role2, int(m2.group(2))
     if role is None:
-        return base, None, tile, is_dx, layer
-    return key, role, tile, is_dx, layer
+        token_map = {kw: r for kw, r in role_map}
+        parts = [t for t in re.split(r"[._\- ]+", base) if t]
+        for i in range(len(parts) - 1, 0, -1):
+            r2 = token_map.get(parts[i])
+            if r2 is not None:
+                key = "_".join(parts[:i])
+                role = r2
+                sub = "_".join(t for t in parts[i + 1:]
+                               if t not in GENERIC_QUALIFIERS) or None
+                break
+    if role is None:
+        return base, None, tile, is_dx, layer, sub
+    return key, role, tile, is_dx, layer, sub
 
 
 def _object_names(ob):
@@ -210,12 +228,17 @@ def _scan_folder(folder, role_map):
         stem, ext = os.path.splitext(name)
         if ext.lower() not in IMG_EXT:
             continue
-        key, role, tile, is_dx, layer = _parse_stem(stem, role_map)
+        key, role, tile, is_dx, layer, sub = _parse_stem(stem, role_map)
         g = groups.setdefault(key, {})
         if role is None:
             g.setdefault("roleless", []).append(name)
             continue
-        rk = role if not layer or layer == 1 else f"{role}#{layer}"
+        if role == "mask" and sub:
+            rk = f"mask#{sub}"
+        elif not layer or layer == 1:
+            rk = role
+        else:
+            rk = f"{role}#{layer}"
         entry = g.setdefault(rk, {"paths": {}})
         if is_dx:
             entry["dx"] = True
@@ -232,12 +255,17 @@ def _scan_blend(role_map):
         if img.source == 'FILE' and not img.filepath.strip():
             continue
         stem = _strip_num_suffix(os.path.splitext(img.name)[0])
-        key, role, tile, is_dx, layer = _parse_stem(stem, role_map)
+        key, role, tile, is_dx, layer, sub = _parse_stem(stem, role_map)
         g = groups.setdefault(key, {})
         if role is None:
             g.setdefault("roleless", []).append(img.name)
             continue
-        rk = role if not layer or layer == 1 else f"{role}#{layer}"
+        if role == "mask" and sub:
+            rk = f"mask#{sub}"
+        elif not layer or layer == 1:
+            rk = role
+        else:
+            rk = f"{role}#{layer}"
         entry = g.setdefault(rk, {"paths": {}})
         if is_dx:
             entry["dx"] = True
@@ -281,10 +309,16 @@ def _load_role_image(entry):
 def _set_colorspace(img, role):
     """Data-карты → is_data=True, как в Node Wrangler (пространство данных
     текущего OCIO-конфига, работает везде).
-    Цветовые карты — явное цветовое пространство: некоторые конфиги
-    (включая ACES без file rule на PNG) грузят картинки как raw,
-    «не трогать» тут оставит вымытое албедо; is_data=False в Blender — но-оп."""
+    Цветовые карты — явное цветовое пространство, НО только если конфиг
+    назначил data/raw (вымытое албедо). Если конфиг уже дал цветовое
+    пространство по file rule (EXR → acescg) — не трогаем: перезатирать
+    линейный EXR в sRGB значит испортить его."""
     if role in COLOR_ROLES:
+        try:
+            if not img.colorspace_settings.is_data:
+                return
+        except (TypeError, AttributeError):
+            pass
         for name in COLORSPACE_SRGB:
             try:
                 img.colorspace_settings.name = name
@@ -381,17 +415,25 @@ def _connect_groups(context, groups):
 
     connected = 0
     skipped = 0
+    mask_count = 0
     errors = []
     notes = []
     mats_touched = set()
     unmatched = []
     roleless = {}
 
+    role_keys = [k for k in groups
+                 if any(r in groups[k] for r in ROLE_ORDER)
+                 or any(kk.startswith("mask#") for kk in groups[k])]
+    single_asset = bool(objs) and len({_norm(k) for k in role_keys}) == 1
+    fallback_noted = False
+
     for key in sorted(groups):
         g = groups[key]
         if g.get("roleless"):
             roleless[key] = g["roleless"]
-        if not any(r in g for r in ROLE_ORDER):
+        if not any(r in g for r in ROLE_ORDER) and \
+                not any(kk.startswith("mask#") for kk in g):
             continue  # только файлы без роли — не кандидат на подключение
         target = None
         nkey = _norm(key)
@@ -399,9 +441,14 @@ def _connect_groups(context, groups):
             if ob.data is not None and nkey in _object_names(ob):
                 target = ob
                 break
-        if target is None and len(groups) == 1 and len(objs) == 1:
-            # Один ассет и один объект — применяем даже при несовпадении имени
+        if target is None and single_asset:
+            # Папка одного ассета: ключ не совпал с именами объектов —
+            # применяем к активному
             target = objs[0]
+            if not fallback_noted:
+                notes.append(f"'{key}': имя ассета не совпало с объектами — "
+                             f"применяю к активному '{objs[0].name}'")
+                fallback_noted = True
         if target is None:
             unmatched.append(key)
             continue
@@ -551,9 +598,34 @@ def _connect_groups(context, groups):
             y_off += 220
             connected += 1
 
+        # Маски (mask#имя): производственные сеты (Mari/Substance camo) несут
+        # десятки именованных масок — грузим UDIM-наборы, вставляем ноды с
+        # подписями БЕЗ связей: камуфляжную разводку художник делает руками
+        mask_keys = sorted(k for k in g if k.startswith("mask#"))
+        if mask_keys:
+            m_y = base_y - y_off - 320
+            for mk in mask_keys:
+                sub_name = mk.split("#", 1)[1]
+                m_entry = g[mk]
+                if m_entry.get("dx"):
+                    continue
+                try:
+                    m_img = _load_role_image(m_entry)
+                except RuntimeError:
+                    errors.append(f"{key}/mask_{sub_name}: файл не читается")
+                    continue
+                _set_colorspace(m_img, "mask")
+                mnode = nt.nodes.new('ShaderNodeTexImage')
+                mnode.image = m_img
+                mnode.label = f"mask_{sub_name}"
+                mnode.location = (base_x - 300, m_y)
+                m_y -= 220
+                mask_count += 1
+
     return {
         "connected": connected,
         "skipped": skipped,
+        "masks": mask_count,
         "errors": errors,
         "notes": notes,
         "mats": sorted(mats_touched),
@@ -573,6 +645,9 @@ def _popup(context, draw, title, icon):
 def _show_results(context, res, title):
     lines = [f"Подключено карт: {res['connected']}",
              f"Материалов затронуто: {len(res['mats'])}"]
+    if res.get("masks"):
+        lines.append(f"Масок вставлено без связей (ручная разводка): "
+                     f"{res['masks']}")
     if res["skipped"]:
         lines.append(f"Пропущено (сокет уже занят): {res['skipped']}")
     if res["errors"]:

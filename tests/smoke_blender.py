@@ -69,6 +69,8 @@ FIXTURES = [
     "cube03_normal_dx.png",
     "cube04_basecolor.png", "cube04_basecolor_2.png", "cube04_mask.png",
     "cube05_basecolor.png", "cube05_mask.png",
+    "cube06.basecolor_acescg.1001.png", "cube06.basecolor_acescg.1002.png",
+    "cube06.mask_dirt_raw.1001.png",
     "notes.txt", "t34_88.png",
 ]
 
@@ -96,14 +98,14 @@ def st_objects():
     vl = bpy.context.view_layer
     for ob in list(vl.objects.selected):
         ob.select_set(False)
-    for nm in ("Cube01", "Cube02", "Cube03", "Cube04", "Cube05"):
+    for nm in ("Cube01", "Cube02", "Cube03", "Cube04", "Cube05", "Cube06"):
         me = bpy.data.meshes.new(nm)
         ob = bpy.data.objects.new(nm, me)
         bpy.context.scene.collection.objects.link(ob)
         ob.select_set(True)
     vl.objects.active = bpy.context.scene.objects["Cube01"]
-    expect(len(vl.objects.selected) == 5, "5 objects selected")
-    return "5 objects"
+    expect(len(vl.objects.selected) == 6, "6 objects selected")
+    return "6 objects"
 
 
 # ── Connect from Folder ──────────────────────────────────────────────────────
@@ -111,7 +113,7 @@ def st_objects():
 def st_connect():
     r = bpy.ops.texture.connect_folder("EXEC_DEFAULT", filepath=TEX_DIR)
     expect(r == {"FINISHED"}, f"op returned {r}")
-    for nm in ("cube01", "cube02", "cube03", "cube04", "cube05"):
+    for nm in ("cube01", "cube02", "cube03", "cube04", "cube05", "cube06"):
         expect(bpy.data.materials.get(nm) is not None, f"material {nm} missing")
 
 
@@ -183,7 +185,21 @@ def st_graphs():
     rgba5 = [s for s in mix5.inputs if s.type == "RGBA"]
     linked5 = [s for s in rgba5 if s.is_linked]
     expect(len(linked5) == 1, "cube05: only basecolor must feed the mix (constant overlay)")
-    return "5 materials verified"
+
+    # production naming: 'cube06.basecolor_acescg.1001' → токен-роль в середине
+    m6 = bpy.data.materials["cube06"]
+    expect(m6 is not None, "cube06: material missing")
+    b6 = _bsdf(m6)
+    expect(b6.inputs["Base Color"].is_linked, "cube06: Base Color linked")
+    bc6 = next(n.image for n in _tex_nodes(m6) if "basecolor" in n.image.name)
+    expect(bc6.source == "TILED" and len(bc6.tiles) == 2,
+           "cube06: UDIM 2 tiles from production naming")
+    floats6 = [n for n in _tex_nodes(m6) if (n.label or "").startswith("mask_")]
+    expect(len(floats6) == 1 and floats6[0].label == "mask_dirt",
+           "cube06: one floating mask node labeled mask_dirt")
+    expect(not any(s.is_linked for s in floats6[0].outputs),
+           "cube06: mask node unlinked")
+    return "6 materials verified"
 
 
 def st_switch_selected():

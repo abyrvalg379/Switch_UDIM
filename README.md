@@ -75,6 +75,8 @@ Naming convention: `Asset_Role.ext`, UDIM: `Asset_Role.1001.ext` (2+ tiles → U
 
 Suffix keywords are editable in **Edit → Preferences → Add-ons → Switch UDIM**. Colorspace is resolved the Node Wrangler way (`is_data`) and works on both standard and ACES OCIO configs.
 
+**Production naming** is recognized too: `asset.role_qualifier.1001.ext` (e.g. `mi24.basecolor_acescg.1001.exr`). The role token is matched anywhere in the name, generic qualifiers (`raw`, `acescg`, ...) are dropped. Named masks (`mi24.mask_dirt01_raw.1001.exr` — camo sets carry a dozen of them) are loaded as labeled UDIM texture nodes left unlinked for manual lookdev wiring. EXR color maps keep the colorspace the OCIO file rule gave them — linear stays linear.
+
 ## Screenshots
 
 <!-- TODO: add panel screenshots -->
