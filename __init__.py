@@ -368,30 +368,34 @@ def _new_mix_multiply(nt):
             next(s for s in mix.outputs if s.type == 'RGBA'))
 
 
-def _ensure_material(ob, key):
-    """Найти материал по имени ассета (у объекта или в файле) или создать."""
+def _find_material(ob, key):
+    """СУЩЕСТВУЮЩИЙ материал ассета в слотах объекта. Без создания,
+    без переименования, без глобального поиска по файлу — глобальный
+    фолбэк как раз и захватывал чужие слоты (кейс glass/mi24)."""
     data = ob.data
     mats = getattr(data, "materials", None)
     if mats is None:
         return None
     want = _norm(key)
-    mat = None
     for slot in mats:
         if slot and _norm(_strip_num_suffix(slot.name)) == want:
-            mat = slot
-            break
-    if mat is None:
-        for m in bpy.data.materials:
-            if _norm(m.name) == want:
-                mat = m
-                break
-    if mat is None:
-        mat = bpy.data.materials.new(key)
-        mat.use_nodes = True
-    if mat.name not in {slot.name for slot in mats if slot}:
-        data.materials.append(mat)
-    if not mat.use_nodes:
-        mat.use_nodes = True
+            return slot
+    return None
+
+
+def _create_material(ob, key):
+    """Создать материал ассета и назначить — ТОЛЬКО если у объекта нет ни
+    одного материала (чужие слоты не трогаем никогда)."""
+    data = ob.data
+    mats = getattr(data, "materials", None)
+    if mats is None:
+        return None
+    if any(mats):
+        return None  # есть чужие материалы — не создаём и не навязываем
+    mat = bpy.data.materials.new(key)
+    mat.use_nodes = True
+    data.materials.append(mat)
+    ob.active_material = mat
     return mat
 
 
@@ -413,24 +417,204 @@ def _ensure_bsdf(nt):
     return bsdf, out
 
 
+def _wire_material(nt, g, key, scene, overwrite, st):
+    """Разложить карты группы g по нодам материала. Счётчики и сообщения —
+    в словаре состояния st (connected/skipped/masks/errors/notes)."""
+    bsdf, out = _ensure_bsdf(nt)
+    base_x, base_y = bsdf.location.x, bsdf.location.y
+    y_off = 0
+    nm_node = None
+    bc_tex = None  # tex-нода Base Color — для AO-микса
+
+    for role in ROLE_ORDER:
+        if role not in g:
+            continue
+        if not getattr(scene, "swudim_use_" + role, True):
+            continue  # роль выключена галкой в панели
+        entry = g[role]
+        if role == "normal" and entry.get("dx"):
+            st["notes"].append(f"{key}/Normal: DX-карта пропущена (Blender хочет GL)")
+            continue
+        if role == "ao" and bc_tex is None:
+            st["notes"].append(f"{key}/AO: нет Base Color — не с чем умножать")
+            continue
+        if role == "displacement":
+            tgt = out.inputs['Displacement'] if out else None
+        else:
+            tgt = _find_input(bsdf, SOCKET_CANDIDATES[role])
+        if tgt is None:
+            st["notes"].append(f"{key}/{ROLE_LABELS[role]}: сокет не найден "
+                               f"в этой версии Blender")
+            continue
+        if role == "ao":
+            # Сокет занимает наша же basecolor-текстура — микс встанет в разрыв.
+            # Сравнение ПО ИМЕНИ: bpy-обёртки каждый раз новые, `is` не работает
+            if tgt.is_linked and tgt.links[0].from_node.name != bc_tex.name \
+                    and not overwrite:
+                st["skipped"] += 1
+                continue
+        elif tgt.is_linked and not overwrite:
+            st["skipped"] += 1
+            continue
+        try:
+            img = _load_role_image(entry)
+        except RuntimeError:
+            st["errors"].append(f"{key}/{ROLE_LABELS[role]}: файл не читается")
+            continue
+        if img is None:
+            st["errors"].append(f"{key}/{ROLE_LABELS[role]}: файл не найден")
+            continue
+        _set_colorspace(img, role)
+
+        tex = nt.nodes.new('ShaderNodeTexImage')
+        tex.image = img
+        tex.location = (base_x - 300, base_y - y_off)
+        node = tex
+
+        if role == "ao":
+            mix, fac, c1, c2, mout = _new_mix_multiply(nt)
+            mix.location = (base_x - 140, base_y - y_off + 110)
+            nt.links.new(bc_tex.outputs['Color'], c1)
+            nt.links.new(tex.outputs['Color'], c2)
+            nt.links.new(mout, tgt)
+            node = mix
+        elif role == "gloss":
+            inv = nt.nodes.new('ShaderNodeInvert')
+            inv.location = (base_x - 140, base_y - y_off + 110)
+            nt.links.new(tex.outputs['Color'], inv.inputs['Color'])
+            nt.links.new(inv.outputs['Color'], tgt)
+            node = inv
+        elif role == "emission":
+            nt.links.new(tex.outputs['Color'], tgt)
+            if 'Emission Strength' in bsdf.inputs and \
+                    bsdf.inputs['Emission Strength'].default_value == 0:
+                bsdf.inputs['Emission Strength'].default_value = 1.0
+        elif role == "normal":
+            nm_node = nt.nodes.new('ShaderNodeNormalMap')
+            nm_node.location = (base_x - 140, base_y - y_off + 110)
+            nt.links.new(tex.outputs['Color'], nm_node.inputs['Color'])
+            nt.links.new(nm_node.outputs['Normal'], tgt)
+            node = nm_node
+        elif role == "bump":
+            bump = nt.nodes.new('ShaderNodeBump')
+            bump.location = (base_x - 140, base_y - y_off + 110)
+            nt.links.new(tex.outputs['Color'], bump.inputs['Height'])
+            if nm_node is not None and overwrite:
+                nt.links.new(nm_node.outputs['Normal'],
+                             bump.inputs['Normal'])
+            nt.links.new(bump.outputs['Normal'], tgt)
+            node = bump
+        elif role == "displacement":
+            disp = nt.nodes.new('ShaderNodeDisplacement')
+            disp.location = (base_x - 140, base_y - y_off + 110)
+            nt.links.new(tex.outputs['Color'], disp.inputs['Height'])
+            nt.links.new(disp.outputs['Displacement'], tgt)
+            node = disp
+        else:
+            nt.links.new(tex.outputs['Color'], tgt)
+
+        if role == "basecolor":
+            bc_tex = tex
+            # Оверлей по маске: Mix(C1=basecolor, C2=basecolor_2 или
+            # константа, Fac=mask) → Base Color
+            use_mask = getattr(scene, "swudim_use_mask", True)
+            mask_entry = (g.get("mask") or g.get("mask#2")) \
+                if use_mask else None
+            o_entry = g.get("basecolor#2")
+            if mask_entry is None and o_entry is not None:
+                if not use_mask:
+                    st["notes"].append(f"{key}: basecolor_2 есть, но маски "
+                                       f"выключены галкой — не подключен")
+                else:
+                    st["notes"].append(f"{key}: basecolor_2 без mask — "
+                                       f"не подключен")
+            if mask_entry is not None:
+                try:
+                    m_img = _load_role_image(mask_entry)
+                except RuntimeError:
+                    m_img = None
+                    st["errors"].append(f"{key}/Mask: файл не читается")
+                if m_img is not None:
+                    _set_colorspace(m_img, "mask")
+                    m_tex = nt.nodes.new('ShaderNodeTexImage')
+                    m_tex.image = m_img
+                    m_tex.location = (base_x - 300, base_y - y_off)
+                    o_tex = None
+                    if o_entry is not None:
+                        try:
+                            o_img = _load_role_image(o_entry)
+                        except RuntimeError:
+                            o_img = None
+                            st["errors"].append(f"{key}/basecolor_2: файл не читается")
+                        if o_img is not None:
+                            _set_colorspace(o_img, "basecolor")
+                            o_tex = nt.nodes.new('ShaderNodeTexImage')
+                            o_tex.image = o_img
+                            o_tex.location = (base_x - 300,
+                                              base_y - y_off + 220)
+                    mix, fac, c1, c2, mout = _new_mix_multiply(nt)
+                    mix.location = (base_x - 140, base_y - y_off + 110)
+                    mix.label = "Overlay"
+                    nt.links.new(bc_tex.outputs['Color'], c1)
+                    if o_tex is not None:
+                        nt.links.new(o_tex.outputs['Color'], c2)
+                    else:
+                        c2.default_value = (1.0, 1.0, 1.0, 1.0)
+                    nt.links.new(m_tex.outputs['Color'], fac)
+                    nt.links.new(mout, tgt)
+                    y_off += 220
+                    st["connected"] += 1 + (1 if o_tex is not None else 0)
+        y_off += 220
+        st["connected"] += 1
+
+    # Маски (mask#имя): производственные сеты (Mari/Substance camo) несут
+    # десятки именованных масок — грузим UDIM-наборы, вставляем ноды с
+    # подписями БЕЗ связей: камуфляжную разводку художник делает руками
+    if getattr(scene, "swudim_use_mask", True):
+        mask_keys = sorted(k for k in g if k.startswith("mask#"))
+        if mask_keys:
+            # идемпотентность: маска с такой подписью уже вставлена — не дублируем
+            placed = {n.label for n in nt.nodes
+                      if n.type == 'TEX_IMAGE'
+                      and (n.label or "").startswith("mask_")}
+            m_y = base_y - y_off - 320
+            for mk in mask_keys:
+                sub_name = mk.split("#", 1)[1]
+                if f"mask_{sub_name}" in placed:
+                    continue
+                m_entry = g[mk]
+                if m_entry.get("dx"):
+                    continue
+                try:
+                    m_img = _load_role_image(m_entry)
+                except RuntimeError:
+                    st["errors"].append(f"{key}/mask_{sub_name}: файл не читается")
+                    continue
+                _set_colorspace(m_img, "mask")
+                mnode = nt.nodes.new('ShaderNodeTexImage')
+                mnode.image = m_img
+                mnode.label = f"mask_{sub_name}"
+                mnode.location = (base_x - 300, m_y)
+                m_y -= 220
+                st["masks"] += 1
+
+
 def _connect_groups(context, groups):
-    """Подключить группы текстур к совпавшим по имени объектам/материалам."""
-    overwrite = getattr(context.scene, "swudim_overwrite", False)
+    """Подключить группы текстур к существующим материалам ассета.
+
+    Правила пайплайна: существующие материалы — приоритет; чужие слоты
+    и назначения не трогаем никогда; новый материал создаётся только на
+    объекте вообще без материалов."""
+    scene = context.scene
+    overwrite = getattr(scene, "swudim_overwrite", False)
     vl = context.view_layer
     objs = list(vl.objects.selected)
     if not objs and vl.objects.active:
         objs = [vl.objects.active]
 
-    connected = 0
-    skipped = 0
-    mask_count = 0
-    errors = []
-    notes = []
-    mats_touched = set()
-    unmatched = []
-    roleless = {}
+    st = {"connected": 0, "skipped": 0, "masks": 0, "errors": [],
+          "notes": [], "mats": set(), "unmatched": [], "roleless": {}}
 
-    scene = context.scene
     only_mat = None
     if getattr(scene, "swudim_target", "ALL") == "ACTIVE":
         # «только выбранный»: материал открытый в шейдер-редакторе,
@@ -441,8 +625,8 @@ def _connect_groups(context, groups):
             if ob_act is not None:
                 only_mat = ob_act.active_material
         if only_mat is None:
-            notes.append("Активный материал не найден — "
-                         "подключаю по именам объектов")
+            st["notes"].append("Активный материал не найден — "
+                               "подключаю по именам объектов")
 
     role_keys = [k for k in groups
                  if any(r in groups[k] for r in ROLE_ORDER)
@@ -453,228 +637,70 @@ def _connect_groups(context, groups):
     for key in sorted(groups):
         g = groups[key]
         if g.get("roleless"):
-            roleless[key] = g["roleless"]
+            st["roleless"][key] = g["roleless"]
         if not any(r in g for r in ROLE_ORDER) and \
                 not any(kk.startswith("mask#") for kk in g):
             continue  # только файлы без роли — не кандидат на подключение
-        target = None
-        nkey = _norm(key)
-        for ob in objs:
-            if ob.data is not None and nkey in _object_names(ob):
-                target = ob
-                break
-        if target is None and single_asset:
-            # Папка одного ассета: ключ не совпал с именами объектов —
-            # применяем к активному
-            target = objs[0]
-            if not fallback_noted:
-                notes.append(f"'{key}': имя ассета не совпало с объектами — "
-                             f"применяю к активному '{objs[0].name}'")
-                fallback_noted = True
-        if target is None:
-            unmatched.append(key)
-            continue
 
+        # Собираем материалы-цели группы. only_mat → один материал;
+        # иначе: объекты с совпавшим именем, при фолбэке одного ассета —
+        # все выделенные (каждый по своим правилам, чужие не трогаем).
         if only_mat is not None:
-            mat = only_mat
+            target_mats = [only_mat]
         else:
-            mat = _ensure_material(target, key)
-            if mat is None:
-                errors.append(f"{key}: нет слота материалов")
+            nkey = _norm(key)
+            matched = [ob for ob in objs
+                       if ob.data is not None and nkey in _object_names(ob)]
+            pool = matched
+            if not pool and single_asset:
+                pool = list(objs)
+                if not fallback_noted:
+                    st["notes"].append(
+                        f"'{key}': имя ассета не совпало с объектами — "
+                        f"применяю ко всем выделенным (чужие материалы "
+                        f"не трогаю)")
+                    fallback_noted = True
+            if not pool:
+                st["unmatched"].append(key)
                 continue
-            # материал сразу активный на объекте — виден в шейдер-редакторе
-            if target.active_material != mat:
-                target.active_material = mat
-        nt = mat.node_tree
-        bsdf, out = _ensure_bsdf(nt)
-        mats_touched.add(mat.name)
-
-        base_x, base_y = bsdf.location.x, bsdf.location.y
-        y_off = 0
-        nm_node = None
-        bc_tex = None  # tex-нода Base Color — для AO-микса
-
-        for role in ROLE_ORDER:
-            if role not in g:
-                continue
-            if not getattr(scene, "swudim_use_" + role, True):
-                continue  # роль выключена галкой в панели
-            entry = g[role]
-            if role == "normal" and entry.get("dx"):
-                notes.append(f"{key}/Normal: DX-карта пропущена (Blender хочет GL)")
-                continue
-            if role == "ao" and bc_tex is None:
-                notes.append(f"{key}/AO: нет Base Color — не с чем умножать")
-                continue
-            if role == "displacement":
-                tgt = out.inputs['Displacement'] if out else None
-            else:
-                tgt = _find_input(bsdf, SOCKET_CANDIDATES[role])
-            if tgt is None:
-                notes.append(f"{key}/{ROLE_LABELS[role]}: сокет не найден "
-                             f"в этой версии Blender")
-                continue
-            if role == "ao":
-                # Сокет занимает наша же basecolor-текстура — микс встанет в разрыв.
-                # Сравнение ПО ИМЕНИ: bpy-обёртки каждый раз новые, `is` не работает
-                if tgt.is_linked and tgt.links[0].from_node.name != bc_tex.name \
-                        and not overwrite:
-                    skipped += 1
-                    continue
-            elif tgt.is_linked and not overwrite:
-                skipped += 1
-                continue
-            try:
-                img = _load_role_image(entry)
-            except RuntimeError:
-                errors.append(f"{key}/{ROLE_LABELS[role]}: файл не читается")
-                continue
-            if img is None:
-                errors.append(f"{key}/{ROLE_LABELS[role]}: файл не найден")
-                continue
-            _set_colorspace(img, role)
-
-            tex = nt.nodes.new('ShaderNodeTexImage')
-            tex.image = img
-            tex.location = (base_x - 300, base_y - y_off)
-            node = tex
-
-            if role == "ao":
-                mix, fac, c1, c2, mout = _new_mix_multiply(nt)
-                mix.location = (base_x - 140, base_y - y_off + 110)
-                nt.links.new(bc_tex.outputs['Color'], c1)
-                nt.links.new(tex.outputs['Color'], c2)
-                nt.links.new(mout, tgt)
-                node = mix
-            elif role == "gloss":
-                inv = nt.nodes.new('ShaderNodeInvert')
-                inv.location = (base_x - 140, base_y - y_off + 110)
-                nt.links.new(tex.outputs['Color'], inv.inputs['Color'])
-                nt.links.new(inv.outputs['Color'], tgt)
-                node = inv
-            elif role == "emission":
-                nt.links.new(tex.outputs['Color'], tgt)
-                if 'Emission Strength' in bsdf.inputs and \
-                        bsdf.inputs['Emission Strength'].default_value == 0:
-                    bsdf.inputs['Emission Strength'].default_value = 1.0
-            elif role == "normal":
-                nm_node = nt.nodes.new('ShaderNodeNormalMap')
-                nm_node.location = (base_x - 140, base_y - y_off + 110)
-                nt.links.new(tex.outputs['Color'], nm_node.inputs['Color'])
-                nt.links.new(nm_node.outputs['Normal'], tgt)
-                node = nm_node
-            elif role == "bump":
-                bump = nt.nodes.new('ShaderNodeBump')
-                bump.location = (base_x - 140, base_y - y_off + 110)
-                nt.links.new(tex.outputs['Color'], bump.inputs['Height'])
-                if nm_node is not None and overwrite:
-                    nt.links.new(nm_node.outputs['Normal'],
-                                 bump.inputs['Normal'])
-                nt.links.new(bump.outputs['Normal'], tgt)
-                node = bump
-            elif role == "displacement":
-                disp = nt.nodes.new('ShaderNodeDisplacement')
-                disp.location = (base_x - 140, base_y - y_off + 110)
-                nt.links.new(tex.outputs['Color'], disp.inputs['Height'])
-                nt.links.new(disp.outputs['Displacement'], tgt)
-                node = disp
-            else:
-                nt.links.new(tex.outputs['Color'], tgt)
-
-            if role == "basecolor":
-                bc_tex = tex
-                # Оверлей по маске: Mix(C1=basecolor, C2=basecolor_2 или
-                # константа, Fac=mask) → Base Color
-                use_mask = getattr(scene, "swudim_use_mask", True)
-                mask_entry = (g.get("mask") or g.get("mask#2")) \
-                    if use_mask else None
-                o_entry = g.get("basecolor#2")
-                if mask_entry is None and o_entry is not None:
-                    if not use_mask:
-                        notes.append(f"{key}: basecolor_2 есть, но маски "
-                                     f"выключены галкой — не подключен")
-                    else:
-                        notes.append(f"{key}: basecolor_2 без mask — "
-                                     f"не подключен")
-                if mask_entry is not None:
-                    try:
-                        m_img = _load_role_image(mask_entry)
-                    except RuntimeError:
-                        m_img = None
-                        errors.append(f"{key}/Mask: файл не читается")
-                    if m_img is not None:
-                        _set_colorspace(m_img, "mask")
-                        m_tex = nt.nodes.new('ShaderNodeTexImage')
-                        m_tex.image = m_img
-                        m_tex.location = (base_x - 300, base_y - y_off)
-                        o_tex = None
-                        if o_entry is not None:
-                            try:
-                                o_img = _load_role_image(o_entry)
-                            except RuntimeError:
-                                o_img = None
-                                errors.append(f"{key}/basecolor_2: файл не читается")
-                            if o_img is not None:
-                                _set_colorspace(o_img, "basecolor")
-                                o_tex = nt.nodes.new('ShaderNodeTexImage')
-                                o_tex.image = o_img
-                                o_tex.location = (base_x - 300,
-                                                  base_y - y_off + 220)
-                        mix, fac, c1, c2, mout = _new_mix_multiply(nt)
-                        mix.location = (base_x - 140, base_y - y_off + 110)
-                        mix.label = "Overlay"
-                        nt.links.new(bc_tex.outputs['Color'], c1)
-                        if o_tex is not None:
-                            nt.links.new(o_tex.outputs['Color'], c2)
-                        else:
-                            c2.default_value = (1.0, 1.0, 1.0, 1.0)
-                        nt.links.new(m_tex.outputs['Color'], fac)
-                        nt.links.new(mout, tgt)
-                        y_off += 220
-                        connected += 1 + (1 if o_tex is not None else 0)
-            y_off += 220
-            connected += 1
-
-        # Маски (mask#имя): производственные сеты (Mari/Substance camo) несут
-        # десятки именованных масок — грузим UDIM-наборы, вставляем ноды с
-        # подписями БЕЗ связей: камуфляжную разводку художник делает руками
-        if getattr(scene, "swudim_use_mask", True):
-            mask_keys = sorted(k for k in g if k.startswith("mask#"))
-            if mask_keys:
-                # идемпотентность: маска с такой подписью уже вставлена — не дублируем
-                placed = {n.label for n in nt.nodes
-                          if n.type == 'TEX_IMAGE'
-                          and (n.label or "").startswith("mask_")}
-                m_y = base_y - y_off - 320
-                for mk in mask_keys:
-                    sub_name = mk.split("#", 1)[1]
-                    if f"mask_{sub_name}" in placed:
+            target_mats = []
+            for ob in pool:
+                mat = _find_material(ob, key)
+                if mat is not None:
+                    # его же материал — можно показать активным
+                    if ob.active_material != mat:
+                        ob.active_material = mat
+                else:
+                    mat = _create_material(ob, key)
+                    if mat is None:
+                        others = [m.name for m in ob.data.materials if m]
+                        st["notes"].append(
+                            f"'{key}': у '{ob.name}' уже есть материалы "
+                            f"({', '.join(others[:2])}) — не трогаю; "
+                            f"подключите через режим 'Только выбранный'")
                         continue
-                    m_entry = g[mk]
-                    if m_entry.get("dx"):
-                        continue
-                    try:
-                        m_img = _load_role_image(m_entry)
-                    except RuntimeError:
-                        errors.append(f"{key}/mask_{sub_name}: файл не читается")
-                        continue
-                    _set_colorspace(m_img, "mask")
-                    mnode = nt.nodes.new('ShaderNodeTexImage')
-                    mnode.image = m_img
-                    mnode.label = f"mask_{sub_name}"
-                    mnode.location = (base_x - 300, m_y)
-                    m_y -= 220
-                    mask_count += 1
+                    st["notes"].append(f"'{key}': создан материал для "
+                                       f"'{ob.name}' (материалов не было)")
+                if mat not in target_mats:
+                    target_mats.append(mat)
+            if not target_mats:
+                continue
+
+        for mat in target_mats:
+            if mat.name in st["mats"]:
+                continue  # материал общий для нескольких объектов — один проход
+            st["mats"].add(mat.name)
+            _wire_material(mat.node_tree, g, key, scene, overwrite, st)
 
     return {
-        "connected": connected,
-        "skipped": skipped,
-        "masks": mask_count,
-        "errors": errors,
-        "notes": notes,
-        "mats": sorted(mats_touched),
-        "unmatched": unmatched,
-        "roleless": roleless,
+        "connected": st["connected"],
+        "skipped": st["skipped"],
+        "masks": st["masks"],
+        "errors": st["errors"],
+        "notes": st["notes"],
+        "mats": sorted(st["mats"]),
+        "unmatched": st["unmatched"],
+        "roleless": st["roleless"],
     }
 
 
