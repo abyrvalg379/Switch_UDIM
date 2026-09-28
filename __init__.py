@@ -368,21 +368,6 @@ def _new_mix_multiply(nt):
             next(s for s in mix.outputs if s.type == 'RGBA'))
 
 
-def _find_material(ob, key):
-    """СУЩЕСТВУЮЩИЙ материал ассета в слотах объекта. Без создания,
-    без переименования, без глобального поиска по файлу — глобальный
-    фолбэк как раз и захватывал чужие слоты (кейс glass/mi24)."""
-    data = ob.data
-    mats = getattr(data, "materials", None)
-    if mats is None:
-        return None
-    want = _norm(key)
-    for slot in mats:
-        if slot and _norm(_strip_num_suffix(slot.name)) == want:
-            return slot
-    return None
-
-
 def _create_material(ob, key):
     """Создать материал ассета и назначить — ТОЛЬКО если у объекта нет ни
     одного материала (чужие слоты не трогаем никогда)."""
@@ -626,13 +611,14 @@ def _connect_groups(context, groups):
                 only_mat = ob_act.active_material
         if only_mat is None:
             st["notes"].append("Активный материал не найден — "
-                               "подключаю по именам объектов")
+                               "подключаю к материалам выделенных объектов")
 
+    # Папка одного ассета → цель = все выделенные объекты (даже если имена
+    # не совпали); несколько ассетов → разбор по совпадению имён
     role_keys = [k for k in groups
                  if any(r in groups[k] for r in ROLE_ORDER)
                  or any(kk.startswith("mask#") for kk in groups[k])]
     single_asset = bool(objs) and len({_norm(k) for k in role_keys}) == 1
-    fallback_noted = False
 
     for key in sorted(groups):
         g = groups[key]
@@ -648,42 +634,32 @@ def _connect_groups(context, groups):
         if only_mat is not None:
             target_mats = [only_mat]
         else:
+            # Цель = материалы ВЫДЕЛЕННЫХ объектов, какие есть — с теми
+            # именами, что дал художник. Материалы создаются только на
+            # объектах, где их не было вовсе.
             nkey = _norm(key)
-            matched = [ob for ob in objs
-                       if ob.data is not None and nkey in _object_names(ob)]
-            pool = matched
-            if not pool and single_asset:
-                pool = list(objs)
-                if not fallback_noted:
-                    st["notes"].append(
-                        f"'{key}': имя ассета не совпало с объектами — "
-                        f"применяю ко всем выделенным (чужие материалы "
-                        f"не трогаю)")
-                    fallback_noted = True
-            if not pool:
+            matched_obs = [ob for ob in objs
+                           if ob.data is not None and nkey in _object_names(ob)]
+            if not matched_obs and single_asset:
+                matched_obs = list(objs)
+            if not matched_obs:
                 st["unmatched"].append(key)
                 continue
             target_mats = []
-            for ob in pool:
-                mat = _find_material(ob, key)
-                if mat is not None:
-                    # его же материал — можно показать активным
-                    if ob.active_material != mat:
-                        ob.active_material = mat
+            for ob in matched_obs:
+                own = [m for m in ob.data.materials if m]
+                if own:
+                    for m in own:
+                        if m not in target_mats:
+                            target_mats.append(m)
                 else:
                     mat = _create_material(ob, key)
-                    if mat is None:
-                        others = [m.name for m in ob.data.materials if m]
-                        st["notes"].append(
-                            f"'{key}': у '{ob.name}' уже есть материалы "
-                            f"({', '.join(others[:2])}) — не трогаю; "
-                            f"подключите через режим 'Только выбранный'")
-                        continue
-                    st["notes"].append(f"'{key}': создан материал для "
-                                       f"'{ob.name}' (материалов не было)")
-                if mat not in target_mats:
-                    target_mats.append(mat)
+                    if mat is not None:
+                        target_mats.append(mat)
+                        st["notes"].append(f"'{key}': для пустого "
+                                           f"'{ob.name}' создан материал")
             if not target_mats:
+                st["unmatched"].append(key)
                 continue
 
         for mat in target_mats:
@@ -1313,9 +1289,9 @@ def register():
         name="Куда",
         description="Цель подключения карт",
         items=(
-            ("ALL", "Все материалы ассета",
-             "Материалы объектов, подобранных по имени ассета "
-             "(+ активный объект при фолбэке)"),
+            ("ALL", "Материалы выделенных объектов",
+             "Подключить карты во ВСЕ материалы выделенных объектов "
+             "(пустым — создать материал)"),
             ("ACTIVE", "Только выбранный материал",
              "Материал, открытый в шейдер-редакторе, либо активный "
              "материал активного объекта"),
