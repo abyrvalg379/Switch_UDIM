@@ -1203,11 +1203,6 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
     def poll(cls, context):
         return context.space_data.tree_type == 'ShaderNodeTree'
 
-    def draw_header(self, context):
-        # Blender вырезает bl_info у extension-модулей — версия из константы
-        self.layout.alignment = 'RIGHT'
-        self.layout.label(text="v" + ".".join(str(x) for x in _VERSION))
-
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
@@ -1228,10 +1223,15 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
 
         box = layout.box()
         box.label(text="Карты к подключению:", icon='TEXTURE')
-        grid = box.grid(flow=True, columns=2, align=True)
-        for role in PANEL_ROLE_ORDER:
-            grid.prop(context.scene, "swudim_use_" + role,
-                      text=ROLE_LABELS[role])
+        # UILayout.grid в Blender 5.2 нет — две колонки через row/column
+        row = box.row(align=True)
+        col_l = row.column(align=True)
+        col_r = row.column(align=True)
+        half = (len(PANEL_ROLE_ORDER) + 1) // 2
+        for i, role in enumerate(PANEL_ROLE_ORDER):
+            col = col_l if i < half else col_r
+            col.prop(context.scene, "swudim_use_" + role,
+                     text=ROLE_LABELS[role])
 
         col = layout.column(align=True)
         col.operator("texture.connect_folder", icon='LINKED')
@@ -1259,6 +1259,10 @@ classes = (
 
 
 def register():
+    # версия в заголовке панели — ПОСЛЕ названия (как у STUKACH);
+    # bl_label читается при register_class, патчим атрибут заранее
+    SWITCH_PT_udim_panel.bl_label = ("UDIM Switch v"
+                                     + ".".join(str(x) for x in _VERSION))
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.swudim_overwrite = BoolProperty(

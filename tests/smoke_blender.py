@@ -25,6 +25,11 @@ from types import SimpleNamespace
 
 MOD = "bl_ext.user_default.switch_udim"
 
+# реальный набор иконок этой сборки Blender — для аудита UI
+VALID_ICONS = {e.identifier for e in
+               bpy.types.UILayout.bl_rna.functions['label']
+               .parameters['icon'].enum_items}
+
 RESULTS = []
 
 
@@ -273,6 +278,71 @@ def st_toggles():
     return f"{len(mod.PANEL_ROLE_ORDER)} roles enabled"
 
 
+class _FakeLayout:
+    """Минимальная подмена UILayout: каждый prop/operator/label проверяется.
+    Панели в -b не рисуются, а битый draw (несуществующий prop/оператор/
+    иконка/метод) обрывает панель на середине — как это уже случилось."""
+
+    def __init__(self, log):
+        object.__setattr__(self, "_log", log)
+
+    alignment = ""
+
+    def _rec(self, kind, *a, **k):
+        self._log.append((kind, a, k))
+        return _FakeLayout(self._log)
+
+    def box(self, *a, **k):
+        return self._rec("box", *a, **k)
+
+    def row(self, *a, **k):
+        return self._rec("row", *a, **k)
+
+    def column(self, *a, **k):
+        return self._rec("column", *a, **k)
+
+    def label(self, *a, **k):
+        ic = k.get("icon")
+        if ic:
+            expect(ic in VALID_ICONS, f"invalid icon: {ic}")
+        return self._rec("label", *a, **k)
+
+    def separator(self, *a, **k):
+        return self._rec("sep", *a, **k)
+
+    def operator(self, *a, **k):
+        op_id = a[0]
+        obj = bpy.ops
+        for part in op_id.split("."):
+            obj = getattr(obj, part)  # raises if not registered
+        ic = k.get("icon")
+        if ic:
+            expect(ic in VALID_ICONS, f"invalid icon: {ic}")
+        return self._rec("operator:" + op_id, *a, **k)
+
+    def prop(self, *a, **k):
+        data, prop = a[0], a[1]
+        if not hasattr(type(data), prop):
+            raise AttributeError(f"prop missing: {prop}")
+        ic = k.get("icon")
+        if ic:
+            expect(ic in VALID_ICONS, f"invalid icon: {ic}")
+        return self._rec("prop:" + prop, *a, **k)
+
+
+def st_draw_probe():
+    from types import SimpleNamespace
+    panel = mod.SWITCH_PT_udim_panel
+    log = []
+    fake_self = SimpleNamespace(layout=_FakeLayout(log))
+    panel.draw(fake_self, bpy.context)
+    props = [a[1] for k, a, _ in log if k.startswith("prop:")]
+    ops = [a[0] for k, a, _ in log if k.startswith("operator:")]
+    expect(len(props) >= 16, f"draw: too few props ({len(props)})")
+    expect(len(ops) >= 7, f"draw: too few operators ({len(ops)})")
+    return f"draw OK: {len(props)} props, {len(ops)} operators"
+
+
 def st_icon_audit():
     """Все иконки, использованные в аддоне, должны существовать —
     битая иконка роняет draw() и панель обрывается на середине."""
@@ -311,6 +381,7 @@ def main():
 
     step("version", st_version)
     step("icon_audit", st_icon_audit)
+    step("draw_probe", st_draw_probe)
     step("toggles", st_toggles)
     step("fixture", st_fixture)
     step("objects", st_objects)
