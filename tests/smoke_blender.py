@@ -273,6 +273,20 @@ def st_toggles():
     return f"{len(mod.PANEL_ROLE_ORDER)} roles enabled"
 
 
+def st_icon_audit():
+    """Все иконки, использованные в аддоне, должны существовать —
+    битая иконка роняет draw() и панель обрывается на середине."""
+    import re
+    src = open(mod.__file__, encoding="utf-8").read()
+    icons = set(re.findall(r"icon='([A-Z_0-9]+)'", src))
+    valid = {e.identifier for e in
+             bpy.types.UILayout.bl_rna.functions['label']
+             .parameters['icon'].enum_items}
+    bad = icons - valid
+    expect(not bad, f"invalid icons: {sorted(bad)}")
+    return f"{len(icons)} icons OK"
+
+
 def st_version():
     # у extension-модулей Blender вырезает bl_info — версия живёт в манифесте
     v = getattr(mod, "bl_info", {}).get("version")
@@ -296,6 +310,7 @@ def main():
     print("=" * 60)
 
     step("version", st_version)
+    step("icon_audit", st_icon_audit)
     step("toggles", st_toggles)
     step("fixture", st_fixture)
     step("objects", st_objects)

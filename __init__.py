@@ -1,7 +1,9 @@
+_VERSION = (1, 1, 1)
+
 bl_info = {
     "name": "Switch UDIM",
     "author": "Maksim Kovalev",
-    "version": (1, 1, 1),
+    "version": _VERSION,
     "blender": (3, 0, 0),
     "location": "Shader Editor > N-Panel > UDIM",
     "description": "Переключение Image Texture между Single Image и UDIM Tiles + автоподключение текстур к Principled BSDF",
@@ -1201,6 +1203,11 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
     def poll(cls, context):
         return context.space_data.tree_type == 'ShaderNodeTree'
 
+    def draw_header(self, context):
+        # Blender вырезает bl_info у extension-модулей — версия из константы
+        self.layout.alignment = 'RIGHT'
+        self.layout.label(text="v" + ".".join(str(x) for x in _VERSION))
+
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
@@ -1220,7 +1227,7 @@ class SWITCH_PT_udim_panel(bpy.types.Panel):
         col.prop(context.scene, "swudim_overwrite", text="Заменять связи")
 
         box = layout.box()
-        box.label(text="Карты к подключению:", icon='TEXTURE_SHADED')
+        box.label(text="Карты к подключению:", icon='TEXTURE')
         grid = box.grid(flow=True, columns=2, align=True)
         for role in PANEL_ROLE_ORDER:
             grid.prop(context.scene, "swudim_use_" + role,
